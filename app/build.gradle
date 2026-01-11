@@ -19,7 +19,7 @@ javafx {
 }
 
 application {
-    mainClass = 'com.boardgames.App'
+    mainClass = 'com.boardgames.Main'
 }
 
 dependencies {
