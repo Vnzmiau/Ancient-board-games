@@ -89,31 +89,21 @@ public class TitleScreen extends StackPane {
 
         // CLICK → OPEN MODE SELECT SCREEN (this is the FIX)
         btn.setOnAction(e -> {
-            GameModeScreen modeScreen = new GameModeScreen(
-                    imgPath,
+            // final Runnables (effectively final for lambda capture)
+            final Runnable onEasy = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
+            final Runnable onMedium = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
+            final Runnable onHard = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
+            final Runnable onLocal2P = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
 
-                    // Singleplayer → difficulty screen
-                    () -> stage.getScene().setRoot(new DifficultyScreen(
-                            imgPath,
-                            () -> {}, // easy
-                            () -> {}, // medium
-                            () -> {}, // hard
-                            () -> stage.getScene().setRoot(new GameModeScreen(
-                                    imgPath,
-                                    () -> {},
-                                    () -> {},
-                                    () -> stage.getScene().setRoot(new TitleScreen(stage))
-                            ))
-                    )),
+            // Use a reference so the back action from Difficulty can return to the same GameModeScreen instance
+            final GameModeScreen[] modeRef = new GameModeScreen[1];
 
-                    // Local 2 player -> do nothing (for now)
-                    () -> {},
+            final Runnable backToMode = () -> stage.getScene().setRoot(modeRef[0]);
+            final Runnable openDifficulty = () -> stage.getScene().setRoot(new DifficultyScreen(imgPath, onEasy, onMedium, onHard, backToMode));
 
-                    // Back → title screen
-                    () -> stage.getScene().setRoot(new TitleScreen(stage))
-            );
+            modeRef[0] = new GameModeScreen(imgPath, openDifficulty, onLocal2P, () -> stage.getScene().setRoot(new TitleScreen(stage)));
 
-            stage.getScene().setRoot(modeScreen);
+            stage.getScene().setRoot(modeRef[0]);
         });
 
         return btn;
