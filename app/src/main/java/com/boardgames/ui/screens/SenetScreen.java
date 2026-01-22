@@ -1,204 +1,530 @@
 package com.boardgames.ui.screens;
 
+import com.boardgames.games.senet.*;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
+import javafx.geometry.Bounds;
+import javafx.geometry.Point2D;
 import javafx.geometry.Pos;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.scene.input.MouseEvent;
-import javafx.scene.layout.*;
+import javafx.scene.layout.GridPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.StackPane;
+import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.Rectangle;
+import javafx.scene.text.Font;
+import javafx.scene.text.Text;
 import javafx.stage.Stage;
+import javafx.util.Duration;
+
+import java.util.HashMap;
+import java.util.Map;
 
 public class SenetScreen extends StackPane {
 
-    // ====== MANUAL TUNING VALUES YOU CAN CHANGE ======
-
-    // board size
-    private static final double BOARD_WIDTH = 900;
-
-    // piece sizes
-    private static final double WHITE_PIECE_SIZE = 90;
+    // ==================== CONFIGURABLE CONSTANTS ====================
+    // Board configuration
+    private static final int ROWS = 3;
+    private static final int COLS = 10;
+    private static final double CELL_SIZE = 74;
+    private static final double BOARD_WIDTH = COLS * CELL_SIZE;
+    private static final double BOARD_HEIGHT = ROWS * CELL_SIZE;
+    
+    // Piece sizes (configurable)
+    private static final double WHITE_PIECE_SIZE = 75;
     private static final double BLACK_PIECE_SIZE = 60;
+    
+    // Dice sticks size (configurable)
+    private static final double DICE_WIDTH = 120;
+    private static final double DICE_HEIGHT = 150;
+    
+    // Spacing (configurable)
+    private static final double SPACING_DICE_TO_BOARD = 90;
 
-    // board layout constants
-    private static final double BOARD_OUTER_BORDER = 16;  // px border around entire board
-    private static final double CELL_BORDER = 1;          // px border between adjacent cells (reduced for closer spacing)
+    private final SenetGame game = new SenetGame();
+    private final GridPane boardPane = new GridPane();
+    private final Map<Integer, StackPane> cellMap = new HashMap<>();
+    private final Map<SenetPiece, ImageView> pieceMap = new HashMap<>();
 
-    // piece positioning adjustments (adjust these to position pieces on X-axis)
-    private static final double FIRST_WHITE_PIECE_X_OFFSET = 43;  // X offset for first white piece
-    private static final double FIRST_BLACK_PIECE_X_OFFSET = 34;  // X offset for first black piece
-    private static final double WHITE_PIECE_SPACING = 1.77;         // cell spacing between white pieces (currently 2 = every other cell)
-    private static final double BLACK_PIECE_SPACING = 1.77;         // cell spacing between black pieces (currently 2 = every other cell)
-    private static final double BLACK_FROM_WHITE_OFFSET = 1;     // cell offset of black pieces from white pieces (currently 1)
+    private Text statusText;
+    private Text playerText;
+    private HBox diceDisplay;
+    private ImageView[] diceSticks = new ImageView[4];
 
-    // dice size & spacing
-    private static final double DICE_SIZE = 150;
-    private static final double SPACING_BETWEEN_ITEMS = 100;      // spacing between board and dice
-    private static final double VERTICAL_CENTER_OFFSET = -900;    // offset from center (negative = move up, positive = move down)
+    // Dragging state
+    private SenetPiece draggingPiece;
+    private ImageView draggingVisual;
+    private StackPane origPositionCell;
+    private Point2D dragOffset = Point2D.ZERO;
 
     public SenetScreen(Stage stage) {
-
-        // ===== Background =====
-        Image bg = new Image(
+        // Background
+        ImageView bg = new ImageView(new Image(
                 getClass().getResource("/assets/backgrounds/senet_background.jpeg").toExternalForm()
-        );
-        ImageView bgView = new ImageView(bg);
-        bgView.setPreserveRatio(false);
+        ));
+        bg.setPreserveRatio(false);
+        bg.fitWidthProperty().bind(widthProperty());
+        bg.fitHeightProperty().bind(heightProperty());
 
-        // ===== Board =====
-        Image boardImg = new Image(
-                getClass().getResource("/assets/senet/senet_board.png").toExternalForm()
-        );
-        ImageView board = new ImageView(boardImg);
-        board.setFitWidth(BOARD_WIDTH);
-        board.setPreserveRatio(true);
+        // Build components
+        buildBoard();
+        placeInitialPieces();
+        setupBoardEventHandlers();
+        createDiceUI();
+
+        // Status texts
+        statusText = new Text("Roll the dice to start!");
+        statusText.setFill(Color.BLACK);
+        statusText.setFont(new Font(16));
+
+        playerText = new Text("White's Turn");
+        playerText.setFill(Color.BLACK);
+        playerText.setFont(new Font(20));
+
+        // Board styling - center alignment for GridPane with NO GAPS
+        boardPane.setAlignment(Pos.CENTER);
+        boardPane.setHgap(0);  // No horizontal gap
+        boardPane.setVgap(0);  // No vertical gap
+        boardPane.setStyle("-fx-background-color: transparent;");
+
+        // Wrap board in a centered container
+        StackPane boardContainer = new StackPane(boardPane);
+        boardContainer.setAlignment(Pos.CENTER);
+
+        // Layout - centered
+        VBox topSection = new VBox(10, playerText, statusText);
+        topSection.setAlignment(Pos.CENTER);
+
+        VBox mainLayout = new VBox(SPACING_DICE_TO_BOARD, topSection, boardContainer, diceDisplay);
+        mainLayout.setAlignment(Pos.CENTER);
+        mainLayout.setStyle("-fx-padding: 20;");
+
+        // Center everything properly on screen
+        StackPane centerLayout = new StackPane();
+        centerLayout.getChildren().add(mainLayout);
+        StackPane.setAlignment(mainLayout, Pos.CENTER);
+
+        getChildren().addAll(bg, centerLayout);
         
-        // Calculate board height based on image aspect ratio
-        double boardHeight = (BOARD_WIDTH / boardImg.getWidth()) * boardImg.getHeight();
+        // Ensure proper centering by binding layout to center
+        centerLayout.prefWidthProperty().bind(widthProperty());
+        centerLayout.prefHeightProperty().bind(heightProperty());
+    }
 
-        // ===== Piece images =====
-        Image whitePieceImg = new Image(
-                getClass().getResource("/assets/senet/white_piece.png").toExternalForm()
-        );
-        Image darkPieceImg = new Image(
-                getClass().getResource("/assets/senet/dark_piece.png").toExternalForm()
-        );
+    // ==================== BOARD SETUP ====================
 
-        // ===== Dice images =====
-        Image diceWhite = new Image(
-                getClass().getResource("/assets/senet/white_side_dice_stick.png").toExternalForm()
-        );
-        Image diceDark = new Image(
-                getClass().getResource("/assets/senet/dark_side_dice_stick.png").toExternalForm()
-        );
+    private void buildBoard() {
+        // Load square images
+        Image squareWhite = new Image(getClass().getResource("/assets/senet/white_square.png").toExternalForm());
+        Image squareRed = new Image(getClass().getResource("/assets/senet/red_square.png").toExternalForm());
 
-        // === Dice row ===
-        HBox diceRow = new HBox(12);
-        diceRow.setAlignment(Pos.CENTER);
+        // Load special numbered squares
+        Image square15 = new Image(getClass().getResource("/assets/senet/15_square.png").toExternalForm());
+        Image square26 = new Image(getClass().getResource("/assets/senet/26_square.png").toExternalForm());
+        Image square27 = new Image(getClass().getResource("/assets/senet/27_square.png").toExternalForm());
+        Image square28 = new Image(getClass().getResource("/assets/senet/28_square.png").toExternalForm());
+        Image square29 = new Image(getClass().getResource("/assets/senet/29_square.png").toExternalForm());
 
-        ImageView d1 = new ImageView(diceWhite);
-        ImageView d2 = new ImageView(diceDark);
-        ImageView d3 = new ImageView(diceWhite);
-        ImageView d4 = new ImageView(diceDark);
+        // Create 3x10 grid with proper board flow (NO VISIBLE BORDERS)
+        int[][] boardLayout = {
+                {1, 2, 3, 4, 5, 6, 7, 8, 9, 10},        // Row 0: 1-10
+                {20, 19, 18, 17, 16, 15, 14, 13, 12, 11}, // Row 1: 20-11 (reverse)
+                {21, 22, 23, 24, 25, 26, 27, 28, 29, 30}   // Row 2: 21-30
+        };
 
-        d1.setFitHeight(DICE_SIZE); d1.setPreserveRatio(true);
-        d2.setFitHeight(DICE_SIZE); d2.setPreserveRatio(true);
-        d3.setFitHeight(DICE_SIZE); d3.setPreserveRatio(true);
-        d4.setFitHeight(DICE_SIZE); d4.setPreserveRatio(true);
+        for (int row = 0; row < ROWS; row++) {
+            for (int col = 0; col < COLS; col++) {
+                int squareNum = boardLayout[row][col];
 
-        diceRow.getChildren().addAll(d1, d2, d3, d4);
+                // Select image based on square number
+                Image squareImg;
+                if (squareNum == 15) {
+                    squareImg = square15;
+                } else if (squareNum == 26) {
+                    squareImg = square26;
+                } else if (squareNum == 27) {
+                    squareImg = square27;
+                } else if (squareNum == 28) {
+                    squareImg = square28;
+                } else if (squareNum == 29) {
+                    squareImg = square29;
+                } else if (squareNum % 2 == 1) {
+                    // Odd squares are RED
+                    squareImg = squareRed;
+                } else {
+                    // Even squares are WHITE
+                    squareImg = squareWhite;
+                }
 
-        // === Piece overlay ===
-        Pane pieceOverlay = new Pane();
-        pieceOverlay.setPrefWidth(BOARD_WIDTH);
-        pieceOverlay.setPrefHeight(boardHeight);
+                // Create cell container
+                StackPane cell = new StackPane();
+                cell.setPrefSize(CELL_SIZE, CELL_SIZE);
+                cell.setStyle("-fx-border-color: transparent;"); // No visible borders
 
-        // Calculate square dimensions based on board layout:
-        // BOARD_WIDTH = 900px total
-        // Outer borders: 16px left + 16px right = 32px
-        // 10 cells with 9 borders between them: 9 * 1px = 9px
-        // Remaining space for cells: 900 - 32 - 9 = 859px
-        // Each cell width: 859 / 10 = 85.9px
-        double cellWidth = (BOARD_WIDTH - 2 * BOARD_OUTER_BORDER - 9 * CELL_BORDER) / 10;
-        
-        // Board has 3 rows; pieces go on TOP row
-        // Calculate row height (boardHeight / 3 for 3 rows)
-        double rowHeight = boardHeight / 3;
-        
-        // Baseline Y position: pieces align to bottom of row
-        // Largest piece (white = 90px) will have its bottom at this baseline
-        double baselineY = BOARD_OUTER_BORDER + rowHeight - (WHITE_PIECE_SIZE / 2);
+                // Create square image
+                ImageView squareImageView = new ImageView(squareImg);
+                squareImageView.setFitWidth(CELL_SIZE);
+                squareImageView.setFitHeight(CELL_SIZE);
+                squareImageView.setPreserveRatio(false);
 
-        // Store references to first white and first black pieces for mouse drag
-        ImageView[] firstWhitePiece = new ImageView[1];
-        ImageView[] firstBlackPiece = new ImageView[1];
-        double[] dragOffsetX = new double[1];
+                // Hover highlight overlay
+                Rectangle highlight = new Rectangle(CELL_SIZE, CELL_SIZE);
+                highlight.setFill(Color.color(1, 1, 0, 0.15)); // Very subtle yellow
+                highlight.setVisible(false);
 
-        // Create 5 white pieces evenly spaced (every 2 cells)
-        for (int w = 0; w < 5; w++) {
-            ImageView whitePiece = new ImageView(whitePieceImg);
-            whitePiece.setFitWidth(WHITE_PIECE_SIZE);
-            whitePiece.setPreserveRatio(true);
+                cell.getChildren().addAll(squareImageView, highlight);
+                boardPane.add(cell, col, row);
 
-            double cellIndex = w * WHITE_PIECE_SPACING;  // spacing controlled by WHITE_PIECE_SPACING
-            double cellStartX = BOARD_OUTER_BORDER + cellIndex * (cellWidth + CELL_BORDER);
-            double cellCenterX = cellStartX + cellWidth / 2;
-
-            // Apply X offset for first white piece, then maintain spacing for others
-            double xPos = cellCenterX - WHITE_PIECE_SIZE / 2;
-            if (w == 0) {
-                xPos += FIRST_WHITE_PIECE_X_OFFSET;
-                firstWhitePiece[0] = whitePiece;
-            } else if (w > 0) {
-                // Position relative to first white piece, maintaining spacing
-                double firstWhiteX = (BOARD_OUTER_BORDER + cellWidth / 2) - WHITE_PIECE_SIZE / 2 + FIRST_WHITE_PIECE_X_OFFSET;
-                double spacingBetweenWhites = WHITE_PIECE_SPACING * (cellWidth + CELL_BORDER);
-                xPos = firstWhiteX + w * spacingBetweenWhites;
+                cellMap.put(squareNum, cell);
             }
+        }
+    }
 
-            whitePiece.setLayoutX(xPos);
-            whitePiece.setLayoutY(baselineY - WHITE_PIECE_SIZE / 2);
+    private void placeInitialPieces() {
+        Image whitePieceImg = new Image(getClass().getResource("/assets/senet/white_piece.png").toExternalForm());
+        Image blackPieceImg = new Image(getClass().getResource("/assets/senet/dark_piece.png").toExternalForm());
 
-            pieceOverlay.getChildren().add(whitePiece);
+        for (int i = 1; i <= 10; i++) {
+            SenetPiece piece = game.getBoard().getPieceAt(i);
+            if (piece == null) continue;
+
+            ImageView pieceView = new ImageView(piece.getColor() == PlayerColor.WHITE ? whitePieceImg : blackPieceImg);
+            double size = piece.getColor() == PlayerColor.WHITE ? WHITE_PIECE_SIZE : BLACK_PIECE_SIZE;
+            pieceView.setFitWidth(size);
+            pieceView.setFitHeight(size);
+            pieceView.setPreserveRatio(true);
+
+            DropShadow shadow = new DropShadow(8, Color.BLACK);
+            pieceView.setEffect(shadow);
+
+            // Position piece in cell (centered)
+            StackPane cell = cellMap.get(i);
+            StackPane.setAlignment(pieceView, Pos.CENTER);
+            cell.getChildren().add(pieceView);
+
+            // Make piece draggable
+            pieceView.setOnMousePressed(e -> startDraggingPiece(piece, pieceView, e));
+            pieceView.setOnMouseDragged(e -> dragPiece(pieceView, e));
+            pieceView.setOnMouseReleased(e -> finishDraggingPiece(pieceView, e));
+            pieceView.setCursor(javafx.scene.Cursor.HAND);
+
+            pieceMap.put(piece, pieceView);
+        }
+    }
+
+    private void setupBoardEventHandlers() {
+        boardPane.addEventFilter(MouseEvent.MOUSE_MOVED, this::highlightSquare);
+        boardPane.addEventFilter(MouseEvent.MOUSE_DRAGGED, this::highlightSquare);
+        boardPane.addEventFilter(MouseEvent.MOUSE_EXITED, e -> clearAllHighlights());
+    }
+
+    // ==================== DICE UI ====================
+
+    private void createDiceUI() {
+        diceDisplay = new HBox(15);
+        diceDisplay.setAlignment(Pos.CENTER);
+        diceDisplay.setStyle("-fx-background-color: transparent; -fx-cursor: hand; -fx-padding: 10;");
+        diceDisplay.setOpacity(1.0);
+        diceDisplay.setDisable(false);  // Start ENABLED for initial roll
+
+        Image darkDice = new Image(getClass().getResource("/assets/senet/dark_side_dice_stick.png").toExternalForm());
+
+        // Create 4 dice sticks - initially all dark (rounded sides up)
+        for (int i = 0; i < 4; i++) {
+            diceSticks[i] = new ImageView(darkDice);
+            diceSticks[i].setFitWidth(DICE_WIDTH);
+            diceSticks[i].setFitHeight(DICE_HEIGHT);
+            diceSticks[i].setPreserveRatio(true);
+
+            diceDisplay.getChildren().add(diceSticks[i]);
+        }
+        
+        // Make entire dice area clickable
+        diceDisplay.setOnMouseClicked(e -> rollDice());
+    }
+
+    private void rollDice() {
+        int result = game.rollDice();
+        updateDiceDisplay(result);
+        refreshBoard();  // Refresh board to show dark piece movement if applicable
+        updateStatus();
+        System.out.println("[SENET] Rolled: " + result);
+    }
+
+    private void updateDiceDisplay(int rollResult) {
+        Image whiteDice = new Image(getClass().getResource("/assets/senet/white_side_dice_stick.png").toExternalForm());
+        Image darkDice = new Image(getClass().getResource("/assets/senet/dark_side_dice_stick.png").toExternalForm());
+
+        // Update dice images: first 'rollResult' sticks show white (flat), rest show dark (rounded)
+        for (int i = 0; i < 4; i++) {
+            if (i < rollResult) {
+                diceSticks[i].setImage(whiteDice);  // Flat side up = white
+            } else {
+                diceSticks[i].setImage(darkDice);   // Rounded side up = dark
+            }
+        }
+    }
+
+    // ==================== INTERACTION ====================
+
+    private void startDraggingPiece(SenetPiece piece, ImageView visual, MouseEvent evt) {
+        if (!game.isMoveHasPending()) {
+            statusText.setText("Roll the dice first!");
+            return;
         }
 
-        // Create 5 black pieces evenly spaced (offset by BLACK_FROM_WHITE_OFFSET)
-        for (int b = 0; b < 5; b++) {
-            ImageView blackPiece = new ImageView(darkPieceImg);
-            blackPiece.setFitWidth(BLACK_PIECE_SIZE);
-            blackPiece.setPreserveRatio(true);
-
-            double cellIndex = b * BLACK_PIECE_SPACING + BLACK_FROM_WHITE_OFFSET;  // offset and spacing controlled
-            double cellStartX = BOARD_OUTER_BORDER + cellIndex * (cellWidth + CELL_BORDER);
-            double cellCenterX = cellStartX + cellWidth / 2;
-
-            // Apply X offset for first black piece, then maintain spacing for others
-            double xPos = cellCenterX - BLACK_PIECE_SIZE / 2;
-            if (b == 0) {
-                xPos += FIRST_BLACK_PIECE_X_OFFSET;
-                firstBlackPiece[0] = blackPiece;
-            } else if (b > 0) {
-                // Position relative to first black piece, maintaining spacing
-                double firstBlackX = (BOARD_OUTER_BORDER + BLACK_FROM_WHITE_OFFSET * (cellWidth + CELL_BORDER) + cellWidth / 2) - BLACK_PIECE_SIZE / 2 + FIRST_BLACK_PIECE_X_OFFSET;
-                double spacingBetweenBlacks = BLACK_PIECE_SPACING * (cellWidth + CELL_BORDER);
-                xPos = firstBlackX + b * spacingBetweenBlacks;
-            }
-
-            blackPiece.setLayoutX(xPos);
-            blackPiece.setLayoutY(baselineY - BLACK_PIECE_SIZE / 2);
-
-            pieceOverlay.getChildren().add(blackPiece);
+        if (piece.getColor() != game.getCurrentPlayer()) {
+            statusText.setText("Not your piece!");
+            return;
         }
 
-        // ==== stack board + pieces ====
-        StackPane boardStack = new StackPane(board, pieceOverlay);
-        boardStack.setMaxWidth(BOARD_WIDTH);
-
-        // === Main layout: board and dice centered with offset ===
-        VBox main = new VBox(SPACING_BETWEEN_ITEMS);
-        main.setAlignment(Pos.CENTER);
-        
-        Region spacer1 = new Region();
-        Region spacer2 = new Region();
-        
-        main.getChildren().addAll(spacer1, boardStack, diceRow, spacer2);
-        
-        // Both spacers grow equally to center the content
-        VBox.setVgrow(spacer1, Priority.ALWAYS);
-        VBox.setVgrow(spacer2, Priority.ALWAYS);
-        
-        // Apply vertical offset: negative = move up, positive = move down
-        // Adjust top spacer's growth to shift both items
-        main.heightProperty().addListener((obs, oldVal, newVal) -> {
-            if (newVal != null) {
-                // Calculate offset by adjusting the top spacer
-                spacer1.setPrefHeight(newVal.doubleValue() / 2 + VERTICAL_CENTER_OFFSET);
+        // Check if this piece can move forward
+        if (!game.canMoveForward(piece)) {
+            // If cannot move forward, check if any other pieces can move forward
+            if (game.hasAnyValidMoveForward(game.getCurrentPlayer())) {
+                statusText.setText("This piece is blocked! Move another piece forward.");
+                return;
             }
-        });
+            // Only allow backward if no pieces can move forward
+            if (!game.canMoveBackward(piece)) {
+                statusText.setText("This piece cannot move!");
+                return;
+            }
+        }
 
-        // === add everything ===
-        getChildren().addAll(bgView, main);
+        draggingPiece = piece;
+        draggingVisual = visual;
+        origPositionCell = cellMap.get(piece.getPosition());
 
-        // fullscreen background bind
-        widthProperty().addListener((obs, o, n) -> bgView.setFitWidth(n.doubleValue()));
-        heightProperty().addListener((obs, o, n) -> bgView.setFitHeight(n.doubleValue()));
+        dragOffset = new Point2D(evt.getX(), evt.getY());
+        visual.setOpacity(0.6);
+        visual.toFront();
+
+        // Highlight valid destination squares
+        int roll = game.getLastRoll();
+        int current = piece.getPosition();
+        
+        // Always try forward first
+        if (game.canMoveForward(piece)) {
+            highlightCell(current + roll, true);
+        } else if (game.canMoveBackward(piece)) {
+            // Only suggest backward if forward is impossible
+            highlightCell(current - roll, true);
+        }
+
+        statusText.setText("Dragging piece from square " + piece.getPosition() + " - Roll: " + roll);
+    }
+
+    private void dragPiece(ImageView visual, MouseEvent evt) {
+        if (draggingVisual != visual) return;
+
+        Point2D sceneCoords = new Point2D(evt.getSceneX(), evt.getSceneY());
+        Point2D boardCoords = boardPane.sceneToLocal(sceneCoords);
+
+        // Keep piece within bounds
+        double newX = boardCoords.getX() - dragOffset.getX();
+        double newY = boardCoords.getY() - dragOffset.getY();
+
+        if (newX >= 0 && newX <= BOARD_WIDTH && newY >= 0 && newY <= BOARD_HEIGHT) {
+            visual.setLayoutX(newX);
+            visual.setLayoutY(newY);
+        }
+
+        evt.consume();
+    }
+
+    private void finishDraggingPiece(ImageView visual, MouseEvent evt) {
+        if (draggingVisual != visual) return;
+
+        Point2D sceneCoords = new Point2D(evt.getSceneX(), evt.getSceneY());
+        Integer targetSquare = findSquareAt(sceneCoords);
+
+        if (targetSquare != null && isValidMove(draggingPiece, targetSquare)) {
+            // Execute move
+            boolean success = game.movePiece(draggingPiece);
+            if (success) {
+                // Clear all highlights before refreshing board
+                clearAllHighlights();
+                refreshBoard();
+                updateStatus();
+            } else {
+                clearAllHighlights();
+                snapPieceBack(visual);
+                updateStatus();  // Update status will re-enable dice if needed
+            }
+        } else {
+            clearAllHighlights();
+            snapPieceBack(visual);
+            updateStatus();  // Update status will re-enable dice if needed
+        }
+
+        draggingPiece = null;
+        draggingVisual = null;
+        dragOffset = Point2D.ZERO;
+    }
+
+    private void snapPieceBack(ImageView visual) {
+        final Timeline timeline = new Timeline();
+        timeline.setCycleCount(1);
+
+        StackPane cell = origPositionCell;
+        Bounds cellBounds = cell.localToScene(cell.getBoundsInLocal());
+        Point2D boardLocal = boardPane.sceneToLocal(cellBounds.getCenterX(), cellBounds.getCenterY());
+
+        timeline.getKeyFrames().add(new KeyFrame(Duration.millis(200),
+                new KeyValue(visual.layoutXProperty(), boardLocal.getX() - WHITE_PIECE_SIZE / 2),
+                new KeyValue(visual.layoutYProperty(), boardLocal.getY() - WHITE_PIECE_SIZE / 2),
+                new KeyValue(visual.opacityProperty(), 1.0)
+        ));
+
+        timeline.play();
+    }
+
+    private Integer findSquareAt(Point2D sceneCoords) {
+        for (Map.Entry<Integer, StackPane> entry : cellMap.entrySet()) {
+            StackPane cell = entry.getValue();
+            Bounds bounds = cell.localToScene(cell.getBoundsInLocal());
+
+            if (bounds.contains(sceneCoords)) {
+                return entry.getKey();
+            }
+        }
+        return null;
+    }
+
+    private boolean isValidMove(SenetPiece piece, int targetSquare) {
+        int roll = game.getLastRoll();
+        int current = piece.getPosition();
+
+        return (targetSquare == current + roll && game.canMoveForward(piece)) ||
+                (targetSquare == current - roll && game.canMoveBackward(piece));
+    }
+
+    // ==================== HIGHLIGHTING ====================
+
+    private void highlightSquare(MouseEvent evt) {
+        if (draggingPiece != null) return;
+
+        Point2D sceneCoords = new Point2D(evt.getSceneX(), evt.getSceneY());
+        Integer square = findSquareAt(sceneCoords);
+
+        clearAllHighlights();
+
+        if (square != null) {
+            StackPane cell = cellMap.get(square);
+            Rectangle highlight = (Rectangle) cell.getChildren().get(1);
+            highlight.setVisible(true);
+        }
+    }
+
+    private void clearAllHighlights() {
+        for (StackPane cell : cellMap.values()) {
+            if (cell.getChildren().size() > 1) {
+                Rectangle highlight = (Rectangle) cell.getChildren().get(1);
+                // Reset to default yellow hover color
+                highlight.setFill(Color.color(1, 1, 0, 0.15));
+                highlight.setVisible(false);
+            }
+        }
+    }
+
+    private void highlightCell(int squareNum, boolean isValid) {
+        StackPane cell = cellMap.get(squareNum);
+        if (cell == null || cell.getChildren().size() < 2) return;
+        
+        Rectangle highlight = (Rectangle) cell.getChildren().get(1);
+        if (isValid) {
+            // Valid destination: bright green highlight
+            highlight.setFill(Color.color(0, 1, 0, 0.3));
+        } else {
+            // Invalid: subtle yellow
+            highlight.setFill(Color.color(1, 1, 0, 0.15));
+        }
+        highlight.setVisible(true);
+    }
+
+    // ==================== REFRESH ====================
+
+    private void refreshBoard() {
+        // Clear all highlights first
+        clearAllHighlights();
+        
+        // Remove all piece views
+        for (StackPane cell : cellMap.values()) {
+            cell.getChildren().removeIf(n -> n instanceof ImageView && n != cell.getChildren().get(0));
+        }
+
+        // Reposition all pieces
+        for (Map.Entry<SenetPiece, ImageView> entry : pieceMap.entrySet()) {
+            SenetPiece p = entry.getKey();
+            ImageView view = entry.getValue();
+
+            if (!p.isOffBoard()) {
+                StackPane cell = cellMap.get(p.getPosition());
+                view.setLayoutX(0);
+                view.setLayoutY(0);
+                view.setOpacity(1.0);
+                StackPane.setAlignment(view, Pos.CENTER);
+                if (!cell.getChildren().contains(view)) {
+                    cell.getChildren().add(view);
+                }
+            } else {
+                view.setVisible(false);
+            }
+        }
+    }
+
+    private void updateDiceInteractivity(boolean enabled) {
+        diceDisplay.setDisable(!enabled);
+        diceDisplay.setStyle("-fx-background-color: transparent; -fx-cursor: " + (enabled ? "hand" : "not-allowed") + ";");
+        
+        // Update individual dice stick opacity
+        double opacity = enabled ? 1.0 : 0.3;
+        for (ImageView dice : diceSticks) {
+            dice.setOpacity(opacity);
+        }
+    }
+
+    private void updateStatus() {
+        // Show Player 1/Player 2 before game starts, White/Black after dark piece owner is determined
+        if (game.isNeedsInitialRoll() || !game.isGameStarted()) {
+            String playerName = game.getCurrentPlayer() == PlayerColor.WHITE ? "Player 1" : "Player 2";
+            playerText.setText(playerName + "'s Turn");
+        } else {
+            String playerColor = game.getCurrentPlayer() == PlayerColor.WHITE ? "White" : "Black";
+            playerText.setText(playerColor + "'s Turn");
+        }
+
+        // Only enable dice when ready to roll (moveHasPending == false)
+        if (!game.isMoveHasPending()) {
+            updateDiceInteractivity(true);
+        } else {
+            // Block dice during move phase
+            updateDiceInteractivity(false);
+        }
+
+        if (game.isGameOver()) {
+            String winnerColor = game.getWinner() == PlayerColor.WHITE ? "White" : "Black";
+            statusText.setText("🎉 " + winnerColor + " WINS! 🎉");
+            updateDiceInteractivity(false);
+            // Make dice even more transparent when game is over
+            for (ImageView dice : diceSticks) {
+                dice.setOpacity(0.2);
+            }
+        } else if (game.isNeedsInitialRoll()) {
+            statusText.setText("Click the DICE to find dark piece owner!");
+        } else if (game.isMoveHasPending()) {
+            int roll = game.getLastRoll();
+            String squareWord = roll > 1 ? "squares" : "square";
+            statusText.setText("Move a piece " + roll + " " + squareWord + " - DRAG piece to highlighted square!");
+        } else {
+            String rollMsg = game.shouldRollAgain() ? " → ROLL AGAIN!" : " → Next Player";
+            statusText.setText("Rolled " + game.getLastRoll() + rollMsg);
+        }
     }
 }
