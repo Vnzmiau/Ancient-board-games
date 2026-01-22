@@ -11,7 +11,6 @@ import javafx.scene.text.Font;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.scene.control.Button;
-import javafx.scene.layout.VBox;
 
 public class TitleScreen extends StackPane {
 
@@ -46,7 +45,31 @@ public class TitleScreen extends StackPane {
         Button bMancala = createGameButton("Mancala", "/assets/backgrounds/mancala_background.jpg", buttonFont, stage);
         Button bGo = createGameButton("Go", "/assets/backgrounds/go_background.jpg", buttonFont, stage);
 
-        VBox buttonsVBox = new VBox(12, bSenet, bUr, bMorris, bMancala, bGo);
+        Button bExit = new Button("EXIT");
+        bExit.setFont(buttonFont);
+        bExit.setTextFill(Color.web("#F5F1E6"));
+        bExit.setPrefHeight(64);
+        
+      
+        bExit.setStyle("-fx-background-color: rgba(60, 0, 0, 0.8); -fx-border-color: #F5F1E6; -fx-cursor: hand;");
+
+        // Scaling logic for the Exit button
+        sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                bExit.prefWidthProperty().bind(newScene.widthProperty().multiply(0.4));
+            }
+        });
+
+        // Hover effects
+        bExit.setOnMouseEntered(e -> bExit.setOpacity(0.8));
+        bExit.setOnMouseExited(e -> bExit.setOpacity(1.0));
+
+        // Action: Close the App
+        bExit.setOnAction(e -> stage.close());
+
+        // --- UPDATE THE VBOX ---
+        // Add bExit to the list of children in the VBox
+        VBox buttonsVBox = new VBox(12, bSenet, bUr, bMorris, bMancala, bGo, bExit);
         buttonsVBox.setAlignment(Pos.CENTER);
 
         VBox mainBox = new VBox(10, titleText, buttonsVBox);
@@ -56,9 +79,7 @@ public class TitleScreen extends StackPane {
     }
 
     private Button createGameButton(String text, String imgPath, Font font, Stage stage) {
-
         text = text.toUpperCase();
-
         Button btn = new Button(text);
         btn.setFont(font);
         btn.setTextFill(Color.web("#F5F1E6"));
@@ -74,34 +95,45 @@ public class TitleScreen extends StackPane {
         );
         btn.setBackground(new Background(backgroundImage));
 
-        // width binding — same as title screen
         btn.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 btn.prefWidthProperty().bind(newScene.widthProperty().multiply(0.4));
             }
         });
 
-        // hover/press effects
+        // Hover effects
         btn.setOnMouseEntered(e -> btn.setOpacity(0.85));
         btn.setOnMouseExited(e -> btn.setOpacity(1.0));
-        btn.setOnMousePressed(e -> btn.setOpacity(0.7));
-        btn.setOnMouseReleased(e -> btn.setOpacity(0.85));
 
-        // CLICK → OPEN MODE SELECT SCREEN (this is the FIX)
+        // Inside TitleScreen.java or your controller
         btn.setOnAction(e -> {
-            // final Runnables (effectively final for lambda capture)
-            final Runnable onEasy = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
-            final Runnable onMedium = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
-            final Runnable onHard = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
-            final Runnable onLocal2P = imgPath.contains("senet_background") ? () -> stage.getScene().setRoot(new SenetScreen(stage)) : () -> {};
-
-            // Use a reference so the back action from Difficulty can return to the same GameModeScreen instance
             final GameModeScreen[] modeRef = new GameModeScreen[1];
+            
+            // 1. Define the 'Back' logic for the Difficulty Screen
+            Runnable backToMode = () -> stage.getScene().setRoot(modeRef[0]);
 
-            final Runnable backToMode = () -> stage.getScene().setRoot(modeRef[0]);
-            final Runnable openDifficulty = () -> stage.getScene().setRoot(new DifficultyScreen(imgPath, onEasy, onMedium, onHard, backToMode));
+            // 2. Define Singleplayer to OPEN DifficultyScreen, NOT the board
+            Runnable onSingleplayer = () -> {
+                // Create the game instance first (required by your DifficultyScreen constructor)
+                SenetScreen senet = new SenetScreen(stage, backToMode);
+                
+                // Show the Difficulty Screen instead of the board
+                DifficultyScreen diffScreen = new DifficultyScreen(imgPath, senet, backToMode);
+                stage.getScene().setRoot(diffScreen);
+            };
 
-            modeRef[0] = new GameModeScreen(imgPath, openDifficulty, onLocal2P, () -> stage.getScene().setRoot(new TitleScreen(stage)));
+            // 3. Define Local 2P to go straight to the board
+            Runnable onLocal2P = () -> {
+                stage.getScene().setRoot(new SenetScreen(stage, backToMode));
+            };
+
+            // 4. Create the GameModeScreen
+            modeRef[0] = new GameModeScreen(
+                imgPath, 
+                onSingleplayer, 
+                onLocal2P, 
+                () -> stage.getScene().setRoot(new TitleScreen(stage))
+            );
 
             stage.getScene().setRoot(modeRef[0]);
         });

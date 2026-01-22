@@ -1,5 +1,6 @@
 package com.boardgames.games.senet;
 
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,6 +20,7 @@ public class SenetGame {
     private final SenetBoard board;
     private PlayerColor currentPlayer;
     private int lastRoll;
+    private int carryOverRoll;
     private PlayerColor darkPieceOwner;
     private boolean gameStarted;
     private boolean needsInitialRoll;
@@ -36,6 +38,7 @@ public class SenetGame {
         gameOver = false;
         winner = null;
         lastRoll = 0;
+        carryOverRoll = 0;
         setupInitialPosition();
     }
 
@@ -59,32 +62,29 @@ public class SenetGame {
      * a move is pending.
      */
     public int rollDice() {
-        if (gameOver) {
+        if (carryOverRoll > 0) {
+            lastRoll = carryOverRoll;
+            carryOverRoll = 0;
+            moveHasPending = true;
             return lastRoll;
         }
 
+        if (gameOver) return lastRoll;
+    
         lastRoll = DiceSticks.roll();
-
+    
         if (needsInitialRoll) {
-            // During initial roll phase
             if (lastRoll == 1) {
-                // This player gets dark pieces and the game officially starts
                 initializeGameWithDarkPieces();
             } else {
-                // Switch to other player, keep waiting for a 1
                 currentPlayer = getOpponent(currentPlayer);
             }
         } else {
-            // Normal gameplay: move is now pending
+            // Normal gameplay: always set move as pending.
+            // The UI will call hasAnyValidMoves() to check if it needs to auto-skip.
             moveHasPending = true;
-
-            // Check if current player has any valid moves
-            if (!hasAnyValidMove(currentPlayer)) {
-                // No valid moves, must pass turn
-                handleNoValidMove();
-            }
         }
-
+    
         return lastRoll;
     }
 
@@ -177,46 +177,64 @@ public class SenetGame {
             return false;
         }
 
-        // Find a valid backward destination
+        // ===== NEW RULE =====
+        // Can only move backward if ALL pieces of same color cannot move forward
+        boolean anyForwardPossible = false;
+        for (int i = 1; i <= 30; i++) {
+            SenetPiece p = board.getPieceAt(i);
+            if (p != null && p.getColor() == piece.getColor() && !p.isOffBoard()) {
+                if (canMoveForward(p)) {
+                    anyForwardPossible = true;
+                    break;
+                }
+            }
+        }
+
+        if (anyForwardPossible) return false; // blocked from moving backward
+
+        // ===== OLD BACKWARD LOGIC =====
         int from = piece.getPosition();
         int to = from - lastRoll;
+        if (to < 1) return false;
 
-        if (to < 1) {
-            return false;
-        }
+        // Can't move to own pieces
+        if (board.isOccupiedByFriendly(to, piece.getColor())) return false;
 
-        // Can't move to your own pieces
-        if (board.isOccupiedByFriendly(to, piece.getColor())) {
-            return false;
-        }
-
-        // If landing on opponent, check if protected
+        // Can't capture protected groups or safe squares
         if (board.isOccupied(to)) {
             SenetPiece target = board.getPieceAt(to);
             if (target != null && target.getColor() != piece.getColor()) {
-                if (board.isSafeSquare(to) || board.isProtectedGroup(to)) {
-                    return false;
-                }
+                if (board.isSafeSquare(to) || board.isProtectedGroup(to)) return false;
             }
         }
 
         return true;
     }
 
+
     /**
      * Check if player has ANY valid move (forward or backward).
      */
     public boolean hasAnyValidMove(PlayerColor color) {
+        boolean canMove = false;
         for (int i = 1; i <= 30; i++) {
             SenetPiece p = board.getPieceAt(i);
             if (p != null && p.getColor() == color && !p.isOffBoard()) {
                 if (canMoveForward(p) || canMoveBackward(p)) {
-                    return true;
+                    canMove = true;
+                    break;
                 }
             }
         }
-        return false;
+
+        if (!canMove) {
+            moveHasPending = false; // auto skip
+            currentPlayer = getOpponent(currentPlayer);
+        }
+
+        return canMove;
     }
+
 
     /**
      * Check if player has ANY valid forward move.
@@ -281,30 +299,46 @@ public class SenetGame {
         int from = piece.getPosition();
         board.removePiece(from);
 
+        // ===== BEARING OFF =====
         if (to > 30) {
-            // Bearing off
             if (canBearOff(piece)) {
-                piece.setPosition(-1);
-                moveHasPending = false;
+                int used = 31 - from;          // squares needed to exit
+                int remainder = lastRoll - used;
+
+                piece.setPosition(-1);         // piece is off the board
+                board.removePiece(from);
+
+                if (remainder > 0 && hasAnyValidMove(currentPlayer)) {
+                    carryOverRoll = remainder;
+                    lastRoll = remainder;
+                    moveHasPending = true;     // FORCE another move
+                } else {
+                    carryOverRoll = 0;
+                    moveHasPending = false;
+                    handleTurnEnd();
+                }
+
                 checkWinCondition();
-                handleTurnEnd();
                 return true;
-            } else {
-                // Can't bear off, revert
-                board.placePiece(piece, from);
-                return false;
             }
         }
 
-        // Handle water trap (square 27 -> square 15 or nearest available)
-        if (to == 27) {
+        // ===== WATER TRAP (SQUARE 15) =====
+        if (to == 27) { // Square 27 sends piece to 15
             to = 15;
-            while (to > 1 && board.isOccupied(to)) {
-                to--;
+
+            // If 15 is occupied, search forward from square 1
+            if (board.isOccupied(to)) {
+                for (int candidate = 1; candidate < 15; candidate++) { // 1 → 14
+                    if (!board.isOccupied(candidate)) {
+                        to = candidate;
+                        break;
+                    }
+                }
             }
         }
 
-        // Handle capture
+        // ===== CAPTURE =====
         if (board.isOccupied(to)) {
             SenetPiece enemy = board.getPieceAt(to);
             if (enemy != null && enemy.getColor() != piece.getColor()
@@ -316,12 +350,14 @@ public class SenetGame {
             }
         }
 
+        // ===== PLACE PIECE =====
         piece.setPosition(to);
         board.placePiece(piece, to);
         moveHasPending = false;
         handleTurnEnd();
         return true;
     }
+
 
     /**
      * Handle turn end: check if should roll again or switch players.
@@ -354,21 +390,23 @@ public class SenetGame {
      * Check if player has won.
      */
     private void checkWinCondition() {
-        // Check if current player has all pieces off board
-        boolean allOff = true;
+        boolean hasAnyOnBoard = false;
+
         for (int i = 1; i <= 30; i++) {
             SenetPiece p = board.getPieceAt(i);
-            if (p != null && p.getColor() == currentPlayer) {
-                allOff = false;
+            if (p != null && p.getColor() == currentPlayer && !p.isOffBoard()) {
+                hasAnyOnBoard = true;
                 break;
             }
         }
 
-        if (allOff) {
+        if (!hasAnyOnBoard) {
             gameOver = true;
             winner = currentPlayer;
+            moveHasPending = false;
         }
     }
+
 
     /**
      * Get list of pieces the player can currently move.
@@ -426,5 +464,14 @@ public class SenetGame {
 
     public static PlayerColor getOpponent(PlayerColor color) {
         return color == PlayerColor.WHITE ? PlayerColor.BLACK : PlayerColor.WHITE;
+    }
+
+    public boolean hasAnyValidMoves() {
+        return hasAnyValidMove(currentPlayer);
+    }
+
+    public void skipTurn() {
+        moveHasPending = false;
+        currentPlayer = getOpponent(currentPlayer);
     }
 }
